@@ -222,4 +222,9 @@ __marimo__/
 *.tmp
 *.pid
 api/*.log
+api/*.db
+api/*.db-shm
+api/*.db-wal
 rainmeter/**/*.bak
+.test-runtime/
+pytest-cache-files-*/

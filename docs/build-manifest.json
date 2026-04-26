@@ -1,0 +1,131 @@
+{
+  "project": "quant-trading-rainmeter-hud",
+  "mode": "monitoring-only",
+  "generated_at_utc": "2026-04-26T07:02:06Z",
+  "git_branch": "codex-build-rainmeter-hud",
+  "git_commit": "9b8026352201f787488e085d72af46093633f17e",
+  "note": "Local manifest generated for CI/CD auto-commit setup.",
+  "safety_boundary": {
+    "trading_execution": false,
+    "private_api_keys": false,
+    "order_placement": false
+  },
+  "file_count": 23,
+  "files": [
+    {
+      "path": ".github/workflows/auto-commit.yml",
+      "bytes": 2602,
+      "sha256": "5d7b7c93aa0d8463738a61d4691f0c41b7f4d567c7533cda115be32b09db0c74"
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "bytes": 1822,
+      "sha256": "37f32113a39110b2e5cf508993867a47e1a32ec439c4ebe1e185b3a8b3caf602"
+    },
+    {
+      "path": "AGENTS.md",
+      "bytes": 1596,
+      "sha256": "666085d83aff2cfade7823502901dff2abcd5b0011fd640748965cd9a25ece14"
+    },
+    {
+      "path": "LICENSE",
+      "bytes": 1083,
+      "sha256": "18eccc1ca10aa20f1ac97dceab0c95d98a850ec558461946ad1666489ef340e8"
+    },
+    {
+      "path": "README.md",
+      "bytes": 5123,
+      "sha256": "8c7532f1a1f146ddb32c90a2ce34537070f62eaff219080af988a703901c06cd"
+    },
+    {
+      "path": "api/api_server.py",
+      "bytes": 10856,
+      "sha256": "699985d09b6fe1a18f9e96cdaec0459f8d552289c26919b5ded2bca58170c696"
+    },
+    {
+      "path": "api/calendar_data.py",
+      "bytes": 689,
+      "sha256": "fb8c1c9722bc1d5466c7d6d814c68a1d668056b36d22635478352d9aa22906bd"
+    },
+    {
+      "path": "api/config.py",
+      "bytes": 3470,
+      "sha256": "e5ed774164e43481d4abe44ac722d52bef1b536d0aa10a34f7dfadcafee77844"
+    },
+    {
+      "path": "api/indicators.py",
+      "bytes": 5561,
+      "sha256": "60efe0c7dffbc4a4c116461be7d964b4339006dbb56f1b222d82a7e198acea87"
+    },
+    {
+      "path": "api/market_data.py",
+      "bytes": 4459,
+      "sha256": "70f6abcf69060090b21051cbacf3fd1456665cc83ecaa8d22744735ff21a4e70"
+    },
+    {
+      "path": "api/requirements-dev.txt",
+      "bytes": 17,
+      "sha256": "6700d31332d98638760043afb099e1c80d2ac094b9cd5a18e1b10365de2700bd"
+    },
+    {
+      "path": "api/requirements.txt",
+      "bytes": 66,
+      "sha256": "e327786c5696e5a94898ab0756ea9b74b70273e19a3771d67d914640bf8f6006"
+    },
+    {
+      "path": "api/risk.py",
+      "bytes": 2754,
+      "sha256": "3153703933482adc117d19ca79e28d9f5b32928837f0af2eb205cd7f9bc01564"
+    },
+    {
+      "path": "api/start_api.bat",
+      "bytes": 2340,
+      "sha256": "da0b3a052a5fba7efc6cbd1e99b140ad669f236449101bb586e797a11ac847cc"
+    },
+    {
+      "path": "api/storage.py",
+      "bytes": 5976,
+      "sha256": "86cc81035b36dd9c4ece93ce7deeba4f2124dfe7428975d0e593f510cd72b2b6"
+    },
+    {
+      "path": "docs/architecture.md",
+      "bytes": 3208,
+      "sha256": "910e0632a5d3015e07c4641cdd17fffed3a61e46b7849c19c0bf78142f9ec1cc"
+    },
+    {
+      "path": "docs/ci-cd.md",
+      "bytes": 2365,
+      "sha256": "42006481205dded75e4ec11c16f77979191eddf1f8de5eb8ef44498add2b188a"
+    },
+    {
+      "path": "docs/setup.md",
+      "bytes": 2355,
+      "sha256": "e0e92e083aab8eaee133e289db62248f4c2f10d375b0c6f34a1be36ceacf3b76"
+    },
+    {
+      "path": "docs/troubleshooting.md",
+      "bytes": 3226,
+      "sha256": "32dfd27bdb9cdbfc60629cd204564096cc08218f9432e2d8b6bb04cd27b2b62a"
+    },
+    {
+      "path": "pytest.ini",
+      "bytes": 85,
+      "sha256": "82ffdb9437a5ce76d1550c7d7a30e178df1ecefbf8d3a6ce9be2e4b8dba27a05"
+    },
+    {
+      "path": "rainmeter/QuantTradingHUD/QuantTradingHUD.ini",
+      "bytes": 8283,
+      "sha256": "74ff6cdd1fbeeef68afa49467618a6ef7f13f12208a78a2e8c3670c3f6d41d6f"
+    },
+    {
+      "path": "scripts/generate_build_manifest.py",
+      "bytes": 5582,
+      "sha256": "ec44a7766006f7644b08a0994e15d05a4d2b668c28959c64557560f6a2e732ff"
+    },
+    {
+      "path": "tests/test_api_contract.py",
+      "bytes": 7238,
+      "sha256": "d86425a2e06b8a4ec2584a16331fed949e952823d21f8392c6be343bef56b997"
+    }
+  ]
+}

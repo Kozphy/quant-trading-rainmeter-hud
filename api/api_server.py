@@ -1,44 +1,29 @@
 """Local FastAPI server for the Quant Trading Rainmeter HUD.
 
-This service only reads Binance public market data. It does not place orders,
-manage accounts, or require exchange API keys.
+The API is monitoring-only. It reads Binance public market data, calculates
+educational indicators, stores local SQLite history, and never places trades.
 """
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import datetime
 from time import perf_counter
 from typing import Any
 
-import httpx
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Query
+
+from calendar_data import get_calendar_payload
+from config import SYMBOL_LABELS, AppConfig, load_config, normalize_symbol
+from indicators import build_indicator_payload
+from market_data import PriceHistory, fetch_market_histories
+from risk import build_risk_payload
+from storage import get_symbol_history, init_db, save_market_snapshots
 
 
-BINANCE_TICKER_URL = "https://api.binance.com/api/v3/ticker/24hr"
-BINANCE_TIMEOUT_SECONDS = 5.0
-SYMBOLS = ("BTCUSDT", "ETHUSDT")
-
-FALLBACK_QUOTES = {
-    "BTCUSDT": {"price": 0.0, "change": 0.0},
-    "ETHUSDT": {"price": 0.0, "change": 0.0},
-}
-
-CALENDAR_TASKS = [
-    {"time": "09:00", "name": "Risk Review"},
-    {"time": "14:30", "name": "Backtest Batch"},
-    {"time": "20:30", "name": "US Macro Watch"},
-    {"time": "23:00", "name": "Execution Log Audit"},
-]
-
-app = FastAPI(
-    title="Quant Trading Rainmeter HUD API",
-    description="Local monitoring API powered by Binance public market data.",
-    version="1.0.0",
-)
-
-
-class MarketDataError(Exception):
-    """Raised when public market data cannot be loaded or parsed."""
+CONFIG = load_config()
+STORAGE_STARTUP_WARNING: str | None = None
 
 
 def get_local_now() -> datetime:
@@ -51,181 +36,283 @@ def get_local_now() -> datetime:
     return datetime.now()
 
 
-def parse_ticker_payload(payload: dict[str, Any], symbol: str) -> dict[str, float]:
-    """Parse Binance ticker JSON into the HUD quote format.
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    """Initialize local storage during FastAPI startup.
 
     Args:
-        payload: JSON object returned by the Binance 24 hour ticker endpoint.
-        symbol: Market symbol being parsed, such as BTCUSDT.
+        _: FastAPI application instance supplied by the framework.
+
+    Yields:
+        None while the application is running.
+    """
+
+    global STORAGE_STARTUP_WARNING
+
+    try:
+        init_db(CONFIG.database_path)
+    except Exception as exc:
+        STORAGE_STARTUP_WARNING = f"SQLite startup warning: {exc}"
+
+    yield
+
+
+app = FastAPI(
+    title="Quant Trading Rainmeter HUD API",
+    description="Local monitoring API powered by Binance public market data.",
+    version="2.0.0",
+    lifespan=lifespan,
+)
+
+
+def round_metric(value: float, digits: int = 2) -> float:
+    """Round a numeric metric for stable HUD display.
+
+    Args:
+        value: Raw numeric value.
+        digits: Number of decimal places to keep.
 
     Returns:
-        A dictionary with numeric price and 24 hour percentage change fields.
+        Rounded numeric value.
+    """
+
+    return round(float(value), digits)
+
+
+def get_bot_status(warnings: list[str], storage_warning: str | None = None) -> str:
+    """Convert warning state into a HUD bot status.
+
+    Args:
+        warnings: Market-data warning messages.
+        storage_warning: Optional SQLite warning message.
+
+    Returns:
+        RUNNING when no warnings exist, otherwise WARNING.
+    """
+
+    return "WARNING" if warnings or storage_warning else "RUNNING"
+
+
+def build_symbol_snapshot(history: PriceHistory) -> dict[str, Any]:
+    """Build one symbol's indicator and risk snapshot.
+
+    Args:
+        history: Recent close-price history for the symbol.
+
+    Returns:
+        Dictionary containing display-ready symbol metrics.
+    """
+
+    indicator_payload = build_indicator_payload(history.closes)
+    risk_payload = build_risk_payload(history.closes)
+
+    return {
+        "symbol": history.symbol,
+        "price": round_metric(float(indicator_payload["price"])),
+        "price_change_percent": round_metric(float(indicator_payload["price_change_percent"])),
+        "rsi": round_metric(float(indicator_payload["rsi"])),
+        "sma20": round_metric(float(indicator_payload["sma20"])),
+        "sma50": round_metric(float(indicator_payload["sma50"])),
+        "signal": str(indicator_payload["signal"]),
+        "confidence": round_metric(float(indicator_payload["confidence"]), 4),
+        "regime": str(indicator_payload["regime"]),
+        "volatility": round_metric(risk_payload["volatility"]),
+        "drawdown": round_metric(risk_payload["drawdown"]),
+        "sharpe": round_metric(risk_payload["sharpe"]),
+        "exposure": round_metric(risk_payload["exposure"]),
+        "source": history.source,
+    }
+
+
+def validate_symbol(symbol: str, config: AppConfig = CONFIG) -> str:
+    """Validate that a symbol is configured for the API.
+
+    Args:
+        symbol: Symbol to validate.
+        config: Runtime configuration containing supported symbols.
+
+    Returns:
+        Normalized symbol when it is configured.
 
     Raises:
-        MarketDataError: If required fields are missing or not numeric.
+        HTTPException: If the symbol is not configured.
     """
 
-    try:
-        price = float(payload["lastPrice"])
-        change = float(payload["priceChangePercent"])
-    except (KeyError, TypeError, ValueError) as exc:
-        raise MarketDataError(f"Invalid Binance payload for {symbol}.") from exc
-
-    return {"price": round(price, 2), "change": round(change, 2)}
+    normalized = normalize_symbol(symbol)
+    if normalized not in config.symbols:
+        raise HTTPException(status_code=400, detail=f"Unsupported symbol: {normalized}")
+    return normalized
 
 
-def fetch_symbol_quote(client: httpx.Client, symbol: str) -> dict[str, float]:
-    """Fetch one public Binance ticker quote.
+def build_flat_data_response(
+    selected: dict[str, Any],
+    snapshots_by_symbol: dict[str, dict[str, Any]],
+    bot_status: str,
+    latency_ms: int,
+    now: datetime,
+    warnings: list[str],
+) -> dict[str, Any]:
+    """Build the Rainmeter-friendly /data response.
 
     Args:
-        client: Configured HTTP client used for the Binance request.
-        symbol: Binance market symbol, such as BTCUSDT or ETHUSDT.
+        selected: Snapshot for the selected symbol.
+        snapshots_by_symbol: Snapshot mapping for all configured symbols.
+        bot_status: Overall status value.
+        latency_ms: Request latency in milliseconds.
+        now: Current local datetime.
+        warnings: Warning messages from data and storage layers.
 
     Returns:
-        A dictionary with numeric price and 24 hour percentage change fields.
-
-    Raises:
-        MarketDataError: If Binance is unreachable, returns a bad status, or
-            sends data that cannot be parsed.
+        A dictionary with stable top-level fields plus nested symbol details.
     """
 
-    try:
-        response = client.get(BINANCE_TICKER_URL, params={"symbol": symbol})
-        response.raise_for_status()
-    except httpx.HTTPError as exc:
-        raise MarketDataError(f"Binance request failed for {symbol}.") from exc
-
-    try:
-        payload = response.json()
-    except ValueError as exc:
-        raise MarketDataError(f"Binance returned invalid JSON for {symbol}.") from exc
-
-    return parse_ticker_payload(payload, symbol)
-
-
-def fetch_market_quotes() -> tuple[dict[str, dict[str, float]], list[str]]:
-    """Fetch BTCUSDT and ETHUSDT quotes from Binance public REST.
-
-    Returns:
-        A tuple containing a quote dictionary and a list of warning messages.
-        Symbols that fail are replaced with numeric fallback values.
-    """
-
-    quotes: dict[str, dict[str, float]] = {}
-    warnings: list[str] = []
-
-    with httpx.Client(timeout=BINANCE_TIMEOUT_SECONDS) as client:
-        for symbol in SYMBOLS:
-            try:
-                quotes[symbol] = fetch_symbol_quote(client, symbol)
-            except MarketDataError as exc:
-                quotes[symbol] = FALLBACK_QUOTES[symbol].copy()
-                warnings.append(str(exc))
-
-    return quotes, warnings
+    return {
+        "selected_symbol": selected["symbol"],
+        "btc_price": snapshots_by_symbol.get("BTCUSDT", {}).get("price", 0.0),
+        "eth_price": snapshots_by_symbol.get("ETHUSDT", {}).get("price", 0.0),
+        "sol_price": snapshots_by_symbol.get("SOLUSDT", {}).get("price", 0.0),
+        "bnb_price": snapshots_by_symbol.get("BNBUSDT", {}).get("price", 0.0),
+        "price": selected["price"],
+        "price_change_percent": selected["price_change_percent"],
+        "signal": selected["signal"],
+        "confidence": selected["confidence"],
+        "regime": selected["regime"],
+        "rsi": selected["rsi"],
+        "sma20": selected["sma20"],
+        "sma50": selected["sma50"],
+        "volatility": selected["volatility"],
+        "drawdown": selected["drawdown"],
+        "sharpe": selected["sharpe"],
+        "exposure": selected["exposure"],
+        "bot_status": bot_status,
+        "latency_ms": latency_ms,
+        "date": now.strftime("%Y-%m-%d"),
+        "day": now.strftime("%A"),
+        "updated_at": now.strftime("%Y-%m-%d %H:%M:%S"),
+        "symbols": snapshots_by_symbol,
+        "warnings": warnings,
+    }
 
 
-def build_signal(btc_change: float) -> dict[str, float | str]:
-    """Build a simple placeholder signal from BTC 24 hour change.
+def build_data_response(selected_symbol: str | None = None, config: AppConfig = CONFIG) -> dict[str, Any]:
+    """Build the full market, indicator, risk, and history response.
 
     Args:
-        btc_change: BTCUSDT 24 hour percentage change from Binance.
+        selected_symbol: Optional symbol to promote to top-level HUD fields.
+        config: Runtime configuration.
 
     Returns:
-        A dictionary containing signal, confidence, and market regime values.
-    """
-
-    # Placeholder only: this is not a trading strategy and must be replaced by
-    # a tested strategy engine before anyone uses it for real decision support.
-    if btc_change >= 1.0:
-        return {"signal": "LONG", "confidence": 0.72, "regime": "Trending"}
-    if btc_change <= -1.0:
-        return {"signal": "SHORT", "confidence": 0.68, "regime": "Risk-Off"}
-    return {"signal": "WAIT", "confidence": 0.51, "regime": "Sideways"}
-
-
-def build_placeholder_risk_metrics(signal: str) -> dict[str, float]:
-    """Build non-trading placeholder risk metrics for the HUD.
-
-    Args:
-        signal: Placeholder signal name returned by build_signal.
-
-    Returns:
-        A dictionary with exposure percentage, drawdown percentage, and Sharpe
-        ratio values for display only.
-    """
-
-    if signal == "LONG":
-        return {"exposure": 35.0, "drawdown": -1.8, "sharpe": 1.21}
-    if signal == "SHORT":
-        return {"exposure": 25.0, "drawdown": -2.2, "sharpe": 0.98}
-    return {"exposure": 0.0, "drawdown": 0.0, "sharpe": 0.0}
-
-
-def build_data_response() -> dict[str, float | int | str]:
-    """Build the full JSON payload for the Rainmeter HUD.
-
-    Returns:
-        A dictionary matching the /data endpoint schema requested by the
-        project brief.
+        Dictionary for the /data endpoint.
     """
 
     started_at = perf_counter()
     now = get_local_now()
+    selected = validate_symbol(selected_symbol or config.primary_symbol, config)
+    histories, warnings = fetch_market_histories(config)
+    if STORAGE_STARTUP_WARNING:
+        warnings.append(STORAGE_STARTUP_WARNING)
 
+    snapshots = [build_symbol_snapshot(histories[symbol]) for symbol in config.symbols]
+    snapshots_by_symbol = {snapshot["symbol"]: snapshot for snapshot in snapshots}
+
+    storage_warning: str | None = None
+    bot_status = get_bot_status(warnings)
     try:
-        quotes, warnings = fetch_market_quotes()
-        bot_status = "WARNING" if warnings else "RUNNING"
-    except Exception:
-        quotes = {symbol: FALLBACK_QUOTES[symbol].copy() for symbol in SYMBOLS}
-        bot_status = "ERROR"
+        save_market_snapshots(
+            config.database_path,
+            snapshots,
+            bot_status,
+            now.strftime("%Y-%m-%d %H:%M:%S"),
+            config.history_limit_per_symbol,
+        )
+    except Exception as exc:
+        storage_warning = f"SQLite storage warning: {exc}"
 
-    btc_quote = quotes["BTCUSDT"]
-    eth_quote = quotes["ETHUSDT"]
-    signal_data = build_signal(btc_quote["change"])
-    risk_metrics = build_placeholder_risk_metrics(str(signal_data["signal"]))
+    if storage_warning:
+        warnings.append(storage_warning)
+        bot_status = get_bot_status(warnings, storage_warning)
+
     latency_ms = int((perf_counter() - started_at) * 1000)
+    return build_flat_data_response(snapshots_by_symbol[selected], snapshots_by_symbol, bot_status, latency_ms, now, warnings)
+
+
+def build_symbols_response(config: AppConfig = CONFIG) -> dict[str, Any]:
+    """Build configured symbol metadata.
+
+    Args:
+        config: Runtime configuration.
+
+    Returns:
+        Dictionary containing primary symbol and supported symbol metadata.
+    """
 
     return {
-        "btc_price": btc_quote["price"],
-        "btc_change": btc_quote["change"],
-        "eth_price": eth_quote["price"],
-        "eth_change": eth_quote["change"],
-        "signal": signal_data["signal"],
-        "confidence": signal_data["confidence"],
-        "regime": signal_data["regime"],
-        "bot_status": bot_status,
-        "latency_ms": latency_ms,
-        "exposure": risk_metrics["exposure"],
-        "drawdown": risk_metrics["drawdown"],
-        "sharpe": risk_metrics["sharpe"],
-        "date": now.strftime("%Y-%m-%d"),
-        "day": now.strftime("%A"),
-        "updated_at": now.strftime("%Y-%m-%d %H:%M:%S"),
+        "primary_symbol": config.primary_symbol,
+        "symbols": [
+            {
+                "symbol": symbol,
+                "label": SYMBOL_LABELS.get(symbol, symbol),
+                "selected": symbol == config.primary_symbol,
+            }
+            for symbol in config.symbols
+        ],
     }
 
 
 @app.get("/")
-def health_check() -> dict[str, str]:
-    """Return a simple health check response.
+def root() -> dict[str, Any]:
+    """Return the same payload as /health for beginner-friendly testing.
 
     Returns:
-        A dictionary showing that the local API is running.
+        Health payload for the local API.
     """
 
-    return {"status": "ok", "service": "quant-trading-rainmeter-hud"}
+    return get_health()
+
+
+@app.get("/health")
+def get_health() -> dict[str, Any]:
+    """Return local API health without calling Binance.
+
+    Returns:
+        Dictionary showing local service status and configured symbols.
+    """
+
+    return {
+        "status": "ok",
+        "service": "quant-trading-rainmeter-hud",
+        "mode": "monitoring-only",
+        "symbols": list(CONFIG.symbols),
+        "database": str(CONFIG.database_path),
+        "storage_status": "warning" if STORAGE_STARTUP_WARNING else "ok",
+        "storage_warning": STORAGE_STARTUP_WARNING,
+    }
 
 
 @app.get("/data")
-def get_data() -> dict[str, float | int | str]:
-    """Return the latest market and monitoring data for Rainmeter.
+def get_data(symbol: str | None = Query(default=None, description="Optional selected symbol, such as BTCUSDT.")) -> dict[str, Any]:
+    """Return market data, indicators, risk metrics, and symbol snapshots.
+
+    Args:
+        symbol: Optional configured symbol to promote to top-level HUD fields.
 
     Returns:
-        A dictionary containing prices, placeholder signal values, placeholder
-        risk metrics, and local timestamps.
+        Dictionary containing Rainmeter-friendly top-level fields and nested
+        per-symbol data.
     """
 
-    return build_data_response()
+    return build_data_response(symbol)
+
+
+@app.get("/symbols")
+def get_symbols() -> dict[str, Any]:
+    """Return configured symbol metadata.
+
+    Returns:
+        Dictionary containing supported symbols and the primary selected symbol.
+    """
+
+    return build_symbols_response()
 
 
 @app.get("/calendar")
@@ -233,7 +320,31 @@ def get_calendar() -> dict[str, str | list[dict[str, str]]]:
     """Return the static trading operations calendar.
 
     Returns:
-        A dictionary containing today's date and the static task list.
+        Dictionary containing today's date and the static task list.
     """
 
-    return {"date": get_local_now().strftime("%Y-%m-%d"), "tasks": CALENDAR_TASKS}
+    return get_calendar_payload(get_local_now())
+
+
+@app.get("/history")
+def get_history(
+    symbol: str = Query(default="BTCUSDT", description="Configured symbol to load history for."),
+    limit: int = Query(default=100, ge=1, le=500, description="Maximum number of rows to return."),
+) -> dict[str, Any]:
+    """Return recent SQLite snapshot history for one symbol.
+
+    Args:
+        symbol: Configured symbol to query.
+        limit: Maximum number of rows to return.
+
+    Returns:
+        Dictionary containing symbol and recent history rows.
+    """
+
+    normalized = validate_symbol(symbol)
+    try:
+        rows = get_symbol_history(CONFIG.database_path, normalized, limit)
+    except Exception as exc:
+        return {"symbol": normalized, "count": 0, "history": [], "warning": f"SQLite history warning: {exc}"}
+
+    return {"symbol": normalized, "count": len(rows), "history": rows}
