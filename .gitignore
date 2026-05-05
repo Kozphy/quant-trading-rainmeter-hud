@@ -229,3 +229,6 @@ rainmeter/**/*.bak
 .test-runtime/
 pytest-cache-files-*/
 logs/*.jsonl
+
+# codex
+AGENT.md
