@@ -228,3 +228,4 @@ api/*.db-wal
 rainmeter/**/*.bak
 .test-runtime/
 pytest-cache-files-*/
+logs/*.jsonl

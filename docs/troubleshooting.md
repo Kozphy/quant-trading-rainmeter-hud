@@ -73,11 +73,11 @@ If package installation gets corrupted:
 
 ## Binance API error
 
-The server handles Binance public API failures by returning fallback history and
-setting:
+The server handles Binance public API failures by returning last-known-good data
+when available and setting:
 
 ```json
-{"bot_status": "WARNING"}
+{"bot_status": "WARNING", "data_status": "STALE"}
 ```
 
 Common causes:
@@ -87,8 +87,7 @@ Common causes:
 - Regional network restrictions
 - Temporary Binance outage
 
-The HUD should still render. Values are fallback demo values until Binance
-public data becomes available again.
+The HUD should still render. `data_staleness_seconds` shows data age.
 
 ## Port 8000 already in use
 
@@ -112,29 +111,29 @@ http://127.0.0.1:8001/data
 http://127.0.0.1:8001/calendar
 ```
 
-## SQLite history looks empty
+## Metrics look stale
 
-Call `/data` once first:
-
-```text
-http://127.0.0.1:8000/data
-```
-
-Then open:
+Open:
 
 ```text
-http://127.0.0.1:8000/history?symbol=BTCUSDT
+http://127.0.0.1:8000/metrics
 ```
 
-The API stores snapshots when `/data` is requested.
+Check:
+- `last_success_at`
+- `data_age_seconds`
+- `binance_error_count`
+
+If `data_age_seconds` grows and errors increase, network access to Binance is
+likely failing.
 
 ## Signal seems too simple
 
 That is intentional. The signal logic is educational:
 
 ```text
-LONG  if price > SMA20 > SMA50 and RSI is between 50 and 70
-SHORT if price < SMA20 < SMA50 and RSI is below 45
+LONG  if BTC 24h change >= +1%
+SHORT if BTC 24h change <= -1%
 WAIT  otherwise
 ```
 
