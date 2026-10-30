@@ -8,14 +8,13 @@ your exchange account, and does not require exchange API keys.
 
 ## Architecture
 
-```text
-Binance Public API
-    |
-    v
-FastAPI Local Server
-    |
-    v
-Rainmeter Desktop HUD
+```mermaid
+flowchart LR
+    B[Binance public REST API<br/>BTCUSDT · ETHUSDT] -->|price, 24h change| S[FastAPI local server<br/>api/api_server.py<br/>127.0.0.1:8000]
+    S --> SIG[Placeholder signal engine<br/>LONG / SHORT / WAIT]
+    S --> RISK[Placeholder risk metrics]
+    S -->|GET /data · GET /calendar| R[Rainmeter WebParser skin<br/>QuantTradingHUD.ini]
+    S -. Binance unavailable .-> FB[Fallback values<br/>bot_status = WARNING]
 ```
 
 The local API runs at:
@@ -23,6 +22,38 @@ The local API runs at:
 ```text
 http://127.0.0.1:8000
 ```
+
+## Screenshot
+
+> **TODO (owner):** add a screenshot of the HUD running on a Windows desktop, e.g. `docs/hud-screenshot.png`, and embed it here. It hasn't been captured yet because Rainmeter only runs on Windows.
+
+## Sample `/data` response (real run)
+
+The server was started with `uvicorn api_server:app` and queried on 2026-10-30 at 19:04 (UTC+8). Prices and 24h changes are **live Binance public data** at that moment. `signal`/`confidence`/`regime` come from the **placeholder** rule in the Signal Logic section, and `exposure`, `drawdown` and `sharpe` are **placeholder** risk values, not real account metrics.
+
+```json
+{
+  "btc_price": 77752.97,
+  "btc_change": -3.08,
+  "eth_price": 2247.69,
+  "eth_change": -3.36,
+  "signal": "SHORT",
+  "confidence": 0.68,
+  "regime": "Risk-Off",
+  "bot_status": "RUNNING",
+  "latency_ms": 2486,
+  "exposure": 25.0,
+  "drawdown": -2.2,
+  "sharpe": 0.98,
+  "date": "2026-10-30",
+  "day": "Friday",
+  "updated_at": "2026-10-30 19:04:19"
+}
+```
+
+## Work with me
+
+I build custom trading dashboards, bot monitoring and trading automation. **Upwork:** https://www.upwork.com/freelancers/~01f2d28a00fa4262d3
 
 ## Features
 
